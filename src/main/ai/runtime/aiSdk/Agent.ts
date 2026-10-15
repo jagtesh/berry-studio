@@ -19,6 +19,7 @@ import { isAbortError } from '@main/utils/error'
 
 import { ALL_MEDIA, routeToolResultMedia } from '../../messages/messageCapabilities'
 import { toModelMessages } from '../../messages/messageRules'
+import { stabilizeToolResultOrder } from '../../messages/toolResultOrder'
 import type { AppProviderSettingsMap } from '../../types'
 import { serializeError } from '../../utils/serializeError'
 import { logger, safeCall, wrapForwardedHook, wrapToolsWithExecutionHooks } from './loop/hookRunner'
@@ -100,14 +101,14 @@ export class Agent<T extends AppProviderKey = AppProviderKey> {
     const forwardedPrepareStep = wrapForwardedHook('prepareStep', hooks.prepareStep)
     const prepareStep: AgentLoopHooks['prepareStep'] = async (options) => {
       const routedMessages = routeToolResultMedia(
-        options.messages,
+        stabilizeToolResultOrder(options.messages),
         params.mediaCapabilities ?? ALL_MEDIA,
         params.toolResultMediaCapabilities ?? params.mediaCapabilities ?? ALL_MEDIA
       )
       const prepared = await forwardedPrepareStep?.({ ...options, messages: routedMessages })
       const preparedMessages = prepared?.messages
         ? routeToolResultMedia(
-            prepared.messages,
+            stabilizeToolResultOrder(prepared.messages),
             params.mediaCapabilities ?? ALL_MEDIA,
             params.toolResultMediaCapabilities ?? params.mediaCapabilities ?? ALL_MEDIA
           )
