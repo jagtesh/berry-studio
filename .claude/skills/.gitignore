@@ -11,4 +11,5 @@
 !gh-create-pr
 !gh-pr-review
 !prepare-release
+!sync-with-cherryhq
 !vercel-react-best-practices

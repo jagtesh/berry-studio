@@ -89,6 +89,10 @@ Before upgrading any dependency, check `patches/` for custom patches.
 
 ## GitHub
 
+### Sync with CherryHQ
+
+For “sync with CherryHQ” or rebasing onto upstream main, use the `sync-with-cherryhq` skill. Fallback: read `.agents/skills/sync-with-cherryhq/SKILL.md` directly. Upstream means **CherryHQ/cherry-studio**, not the Berry Studio `origin`; verify the remote URL before fetching or rebasing.
+
 ### Pull Requests
 
 Use the `gh-create-pr` skill. Fallback: read `.agents/skills/gh-create-pr/SKILL.md` directly.
