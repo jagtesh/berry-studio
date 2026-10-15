@@ -33,6 +33,7 @@ import { skipGeminiThoughtSignatureFeature } from './skipGeminiThoughtSignature'
 import { steerYieldFeature } from './steerYield'
 import { stripReasoningReplayFeature } from './stripReasoningReplay'
 import { terminalToolFailureFeature } from './terminalToolFailure'
+import { textToolCallsFeature } from './textToolCalls'
 import { toolSchemaCompatibilityFeature } from './toolSchemaCompatibility'
 
 export const INTERNAL_FEATURES: readonly RequestFeature[] = [
@@ -40,6 +41,7 @@ export const INTERNAL_FEATURES: readonly RequestFeature[] = [
   gatewayUsageNormalizeFeature,
   // DeepSeek-only: re-extract DSML-markup tool calls from text before reasoning extraction.
   deepseekDsmlParserFeature,
+  textToolCallsFeature,
   // DeepSeek-only: tag replayed reasoning so the Responses serializer passes it back (#18150).
   deepseekResponsesReasoningReplayFeature,
   grokReasoningReplayFeature,
