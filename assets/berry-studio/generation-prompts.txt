@@ -1,0 +1,10 @@
+Built-in image_gen tool; reference: masters/inspiration.png
+
+COLOR MASTER
+Use case: logo-brand. Create a production desktop application icon for Berry Studio inspired by the attached blackberry: a single plump dark indigo-purple blackberry with glossy sculpted drupelets and two fresh green leaves. Preserve its recognizable blackberry silhouette and rich purple/green identity, but simplify to about 12-16 broad rounded berry lobes so it reads clearly at 32 pixels. Polished dimensional illustration, restrained highlights, crisp silhouette, balanced centered composition on a square canvas with 8 percent clear margin on all sides. Leaves fully inside canvas. Actual transparent background, no black backdrop, no tile, no lettering, no shadow outside the fruit, no glow, no outline fringe, no watermark. One isolated icon only, not a sheet of variants.
+
+TRAY MASTER
+Use case: logo-brand. Asset: monochrome tray template icon for Berry Studio. Inspired by the attached blackberry's silhouette, draw a very simple flat black blackberry symbol with two leaves, composed of 7-9 big merged rounded drupelets, with a few broad transparent curved gaps to suggest the berry segments. Strong solid silhouette recognizable at 16 pixels. Two simple solid leaf shapes with thick transparent vein cutouts. Centered square composition with 8 percent clear margins. Pure black opaque shapes and actual transparent background only. No gray shading, no gradients, no outline, no colored fruit, no text, no watermark, no backdrop, no icon tile. A single symbol, not a contact sheet.
+
+EXPORTS
+PNG sizes and ICO/ICNS generated deterministically from these masters with Pillow. Black and white tray variants share the same alpha mask. Wordmark lettering rendered with Arial Bold.
