@@ -4,6 +4,7 @@ import { type JSONSchema7, type Tool } from 'ai'
 import { application } from '@application'
 import { loggerService } from '@logger'
 import type { McpInteractionContext } from '@main/ai/mcp/connections/McpConnection'
+import type { FileAttachmentRef } from '@main/ai/messages/attachmentTypes'
 import { registerMcpToolResources } from '@main/ai/messages/mcpToolResources'
 import { mcpServerService } from '@main/data/services/McpServerService'
 import { isMcpToolForcePromptBySource } from '@shared/ai/tools/mcpSourcePolicy'
@@ -19,6 +20,62 @@ import { mcpResultToModelOutput, mcpResultToTextSummary } from './utils'
 const logger = loggerService.withContext('mcpTools')
 
 const namespaceForServer = (serverId: string) => `mcp:${serverId}`
+const COMFYUI_UPLOAD_DESCRIPTION =
+  'Upload an image attached to this conversation to ComfyUI by its shown attachment name. Returns the ComfyUI filename for edit_image. No shell or file path is needed.'
+
+function isComfyuiUploadTool(tool: McpTool): boolean {
+  return tool.name === 'upload_image' && tool.serverName.toLowerCase().startsWith('comfyui')
+}
+
+async function uploadComfyuiAttachment(
+  server: McpServer,
+  filename: string,
+  attachments: ReadonlyArray<FileAttachmentRef>,
+  signal: AbortSignal | undefined,
+  callId: string
+): Promise<CallToolResult> {
+  const attachment = attachments.find((entry) => entry.handle === filename)
+  if (!attachment) throw new Error(`No image attached to this conversation is named ${JSON.stringify(filename)}.`)
+  if (!server.baseUrl) throw new Error('ComfyUI MCP server has no upload endpoint.')
+
+  const ticket = await application.get('McpRuntimeService').callTool({
+    serverId: server.id,
+    name: 'upload_image',
+    args: {},
+    callId,
+    signal
+  })
+  if (ticket.isError) throw new Error(mcpResultToTextSummary(ticket) || 'ComfyUI upload ticket failed')
+  const ticketText = ticket.content.find((part) => part.type === 'text')?.text
+  const upload = JSON.parse(ticketText ?? '{}') as {
+    upload_url?: string
+    max_bytes?: number
+    accepted_types?: string[]
+  }
+  const uploadUrl = new URL(upload.upload_url ?? '')
+  const serverUrl = new URL(server.baseUrl)
+  if (uploadUrl.origin !== serverUrl.origin || !['http:', 'https:'].includes(uploadUrl.protocol)) {
+    throw new Error('ComfyUI returned an upload URL outside its configured server.')
+  }
+
+  const { content, mime } = await application.get('FileManager').read(attachment.fileEntryId, { encoding: 'base64' })
+  if (!mime.startsWith('image/') || (upload.accepted_types && !upload.accepted_types.includes(mime))) {
+    throw new Error('The attached image type is not accepted by ComfyUI.')
+  }
+  const bytes = Buffer.from(content, 'base64')
+  if (upload.max_bytes && bytes.length > upload.max_bytes)
+    throw new Error('The attached image exceeds the ComfyUI upload limit.')
+
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': mime },
+    body: bytes,
+    redirect: 'error',
+    signal
+  })
+  if (!response.ok) throw new Error(`ComfyUI image upload failed (HTTP ${response.status}).`)
+  return { content: [{ type: 'text', text: await response.text() }] }
+}
 
 function resolveActiveServerById(serverId: string): McpServer | undefined {
   // Direct point lookup instead of listing every active server on each tool call.
@@ -45,8 +102,10 @@ function interactionContext(options: Parameters<NonNullable<Tool['execute']>>[1]
 
 /** Build the AI SDK Tool wrapper around a single McpTool. */
 function createMcpTool(mcpTool: McpTool, forcePrompt: boolean): Tool {
+  const comfyuiUpload = isComfyuiUploadTool(mcpTool)
+  const description = comfyuiUpload ? COMFYUI_UPLOAD_DESCRIPTION : mcpTool.description || mcpTool.name
   const metadata = {
-    description: mcpTool.description,
+    description: comfyuiUpload ? COMFYUI_UPLOAD_DESCRIPTION : mcpTool.description,
     name: mcpTool.name,
     serverId: mcpTool.serverId,
     serverName: mcpTool.serverName,
@@ -54,9 +113,18 @@ function createMcpTool(mcpTool: McpTool, forcePrompt: boolean): Tool {
   }
   return {
     type: 'function',
-    description: mcpTool.description || mcpTool.name,
+    description,
     metadata: { cherry: { tool: metadata } },
-    inputSchema: createMcpInputSchema(mcpTool.inputSchema as JSONSchema7),
+    inputSchema: createMcpInputSchema(
+      comfyuiUpload
+        ? {
+            type: 'object',
+            properties: { image_filename: { type: 'string' } },
+            required: ['image_filename'],
+            additionalProperties: false
+          }
+        : (mcpTool.inputSchema as JSONSchema7)
+    ),
     needsApproval: async () => forcePrompt,
     execute: async (args: Record<string, unknown>, options) => {
       const { toolCallId, abortSignal } = options
@@ -64,17 +132,25 @@ function createMcpTool(mcpTool: McpTool, forcePrompt: boolean): Tool {
       if (!server) {
         throw new Error(`MCP server ${mcpTool.serverId} is not active or no longer registered`)
       }
-      const result: CallToolResult = await application.get('McpRuntimeService').callTool({
-        serverId: server.id,
-        name: mcpTool.name,
-        args,
-        callId: toolCallId,
-        // Isolation scope for abort-by-id: provider call ids (e.g. "call_0") can collide
-        // across topics, and the renderer's abort presents the same topicId.
-        scope: getRequestContext(options)?.topicId,
-        signal: abortSignal,
-        interactionContext: interactionContext(options)
-      })
+      const result: CallToolResult = comfyuiUpload
+        ? await uploadComfyuiAttachment(
+            server,
+            String(args.image_filename),
+            getRequestContext(options)?.fileAttachments ?? [],
+            abortSignal,
+            toolCallId
+          )
+        : await application.get('McpRuntimeService').callTool({
+            serverId: server.id,
+            name: mcpTool.name,
+            args,
+            callId: toolCallId,
+            // Isolation scope for abort-by-id: provider call ids (e.g. "call_0") can collide
+            // across topics, and the renderer's abort presents the same topicId.
+            scope: getRequestContext(options)?.topicId,
+            signal: abortSignal,
+            interactionContext: interactionContext(options)
+          })
 
       if (result.isError) {
         throw new Error(mcpResultToTextSummary(result) || 'MCP tool call failed')
@@ -107,7 +183,7 @@ function toEntry(mcpTool: McpTool, server: McpServer): ToolEntry {
     name: mcpTool.id,
     namespace: namespaceForServer(server.id),
     namespaceLabel: `mcp:${server.name}`,
-    description: mcpTool.description || mcpTool.name,
+    description: isComfyuiUploadTool(mcpTool) ? COMFYUI_UPLOAD_DESCRIPTION : mcpTool.description || mcpTool.name,
     defer: forcePrompt ? 'never' : 'auto',
     tool: createMcpTool(mcpTool, forcePrompt),
     applies: (scope) => scope.mcpToolIds.has(mcpTool.id)

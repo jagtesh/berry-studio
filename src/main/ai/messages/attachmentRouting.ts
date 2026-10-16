@@ -245,6 +245,8 @@ async function prepareChatMessage<T extends UIMessage>(
         if (!(await inlineNative(part))) {
           logger.warn('Native file materialization failed; degrading to note', { messageId: message.id, displayName })
           kept.push(noteOf(handle))
+        } else if (fileType === FILE_TYPE.IMAGE) {
+          kept.push({ type: 'text', text: `Image attachment name: ${JSON.stringify(handle)}` })
         }
         continue
       }

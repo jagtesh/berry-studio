@@ -95,6 +95,7 @@ describe('prepareChatMessages — routing', () => {
     resolveMock.mockImplementation(async (p) => p)
     const [out] = await run([fileWithEntry('e1', 'a.png', 'image/png')], ALL)
     expect(out.parts.filter((p) => p.type === 'file')).toHaveLength(1)
+    expect(textOf(out.parts)).toEqual(['Image attachment name: "a.png"'])
     expect(resolveMock).toHaveBeenCalled()
     expect(ocrMock).not.toHaveBeenCalled()
     expect(extractMock).not.toHaveBeenCalled()

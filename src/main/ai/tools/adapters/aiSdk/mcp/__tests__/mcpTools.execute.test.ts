@@ -1,5 +1,5 @@
 import type { CallToolResult } from '@modelcontextprotocol/client'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createToolInvokeTool } from '@main/ai/tools/adapters/aiSdk/meta/toolInvoke'
 
@@ -10,12 +10,15 @@ const listTools = vi.fn()
 const list = vi.fn()
 const getById = vi.fn()
 const callTool = vi.fn<(req: unknown) => Promise<CallToolResult>>()
+const fileRead = vi.fn()
+const uploadFetch = vi.fn()
 
 vi.mock('@application', async () => {
   const { mockApplicationFactory } = await import('@test-mocks/main/application')
   return mockApplicationFactory({
     McpCatalogService: { listTools },
-    McpRuntimeService: { callTool }
+    McpRuntimeService: { callTool },
+    FileManager: { read: fileRead }
   } as Record<string, unknown>)
 })
 
@@ -54,6 +57,7 @@ async function registerToolExecute(reg: ToolRegistry) {
 }
 
 describe('mcpTools execute wrapper', () => {
+  afterEach(() => vi.unstubAllGlobals())
   it('honors declared schema dialects and rejects unsupported dialects', () => {
     const schema = { type: 'array' as const, items: [{ type: 'string' as const }], additionalItems: false }
     const validate = createMcpJsonSchemaValidator({ ...schema, $schema: 'http://json-schema.org/draft-07/schema#' })
@@ -70,6 +74,8 @@ describe('mcpTools execute wrapper', () => {
     list.mockReset()
     getById.mockReset()
     callTool.mockReset()
+    fileRead.mockReset()
+    uploadFetch.mockReset()
   })
 
   it('rejects when the server is no longer active or registered', async () => {
@@ -127,6 +133,89 @@ describe('mcpTools execute wrapper', () => {
     })
     expect(out.content).toEqual([{ type: 'text', text: 'ok' }])
     expect(out.metadata).toEqual({ description: '', name: 't', serverName: 's1', serverId: 's1', type: 'mcp' })
+  })
+
+  it('uploads only a conversation image to ComfyUI without a shell or local path', async () => {
+    const reg = new ToolRegistry()
+    list.mockReturnValue({ items: [activeServer('comfy')] })
+    listTools.mockReturnValue([{ ...mcpTool('comfy', 'upload_image'), serverName: 'comfyui' }])
+    await syncMcpToolsToRegistry(reg)
+    const execute = reg.getByName('mcp__comfy__upload_image')!.tool.execute!
+    getById.mockReturnValue({ ...activeServer('comfy'), name: 'comfyui', baseUrl: 'http://comfy.test/mcp' })
+    callTool.mockResolvedValue({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            upload_url: 'http://comfy.test/upload/ticket',
+            accepted_types: ['image/png'],
+            max_bytes: 100
+          })
+        }
+      ]
+    })
+    fileRead.mockResolvedValue({ content: 'QUJD', mime: 'image/png' })
+    uploadFetch.mockResolvedValue({ ok: true, text: async () => '{"image":"uploaded.png"}' })
+    vi.stubGlobal('fetch', uploadFetch)
+
+    const result = (await execute({ image_filename: 'photo.png' }, {
+      toolCallId: 'call-upload',
+      abortSignal: new AbortController().signal,
+      experimental_context: {
+        requestId: 'request-1',
+        fileAttachments: [{ fileEntryId: 'entry-photo', handle: 'photo.png', displayName: 'photo.png' }]
+      }
+    } as any)) as CallToolResult
+
+    expect(callTool).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: 'comfy', name: 'upload_image', args: {} })
+    )
+    expect(fileRead).toHaveBeenCalledWith('entry-photo', { encoding: 'base64' })
+    expect(uploadFetch).toHaveBeenCalledWith(
+      new URL('http://comfy.test/upload/ticket'),
+      expect.objectContaining({ method: 'PUT', body: Buffer.from('ABC'), redirect: 'error' })
+    )
+    expect(result.content).toEqual([{ type: 'text', text: '{"image":"uploaded.png"}' }])
+  })
+
+  it('rejects an unattached ComfyUI filename before requesting an upload ticket', async () => {
+    const reg = new ToolRegistry()
+    list.mockReturnValue({ items: [activeServer('comfy')] })
+    listTools.mockReturnValue([{ ...mcpTool('comfy', 'upload_image'), serverName: 'comfyui' }])
+    await syncMcpToolsToRegistry(reg)
+    getById.mockReturnValue({ ...activeServer('comfy'), name: 'comfyui', baseUrl: 'http://comfy.test/mcp' })
+
+    await expect(
+      reg.getByName('mcp__comfy__upload_image')!.tool.execute!({ image_filename: '/tmp/secret.png' }, {
+        toolCallId: 'call-upload',
+        abortSignal: new AbortController().signal
+      } as any)
+    ).rejects.toThrow('No image attached')
+    expect(callTool).not.toHaveBeenCalled()
+    expect(fileRead).not.toHaveBeenCalled()
+  })
+
+  it('rejects a ComfyUI upload ticket pointing at another server', async () => {
+    const reg = new ToolRegistry()
+    list.mockReturnValue({ items: [activeServer('comfy')] })
+    listTools.mockReturnValue([{ ...mcpTool('comfy', 'upload_image'), serverName: 'comfyui' }])
+    await syncMcpToolsToRegistry(reg)
+    getById.mockReturnValue({ ...activeServer('comfy'), name: 'comfyui', baseUrl: 'http://comfy.test/mcp' })
+    callTool.mockResolvedValue({
+      content: [{ type: 'text', text: '{"upload_url":"http://other.test/upload"}' }]
+    })
+
+    await expect(
+      reg.getByName('mcp__comfy__upload_image')!.tool.execute!({ image_filename: 'photo.png' }, {
+        toolCallId: 'call-upload',
+        abortSignal: new AbortController().signal,
+        experimental_context: {
+          requestId: 'request-1',
+          fileAttachments: [{ fileEntryId: 'entry-photo', handle: 'photo.png', displayName: 'photo.png' }]
+        }
+      } as any)
+    ).rejects.toThrow('outside its configured server')
+    expect(fileRead).not.toHaveBeenCalled()
   })
 
   it('rejects Draft 2020-12-invalid deferred arguments before calling the MCP runtime', async () => {
