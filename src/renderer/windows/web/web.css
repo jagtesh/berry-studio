@@ -1,0 +1,15 @@
+@import '../../../../packages/ui/src/styles/theme.css';
+@import '@cherrystudio/ui/components/composites/markdown/styles';
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, sans-serif;
+}
